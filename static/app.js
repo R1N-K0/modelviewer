@@ -6,11 +6,6 @@ import { OrbitControls } from './vendor/three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from './vendor/three/addons/loaders/GLTFLoader.js';
 
 const MODELS = ['dragon', 'bunny', 'teapot'];
-const RESUME_MS = 2000;
-// Seconds from the resume to full speed, so a model at rest does not jump into a steady turn.
-const RAMP_SECONDS = 1;
-// Per second when update() is given seconds: one turn a minute, whatever the display's rate.
-const AUTO_ROTATE_SPEED = 1;
 // The share of the remaining drag that is applied in one 60 Hz frame. OrbitControls' default,
 // 0.05, glides on for about a second after the finger lifts, which overshoots the view that
 // was aimed at; at 0.2 the glide is down to 3.5% in about 0.25 s.
@@ -35,8 +30,8 @@ scene.background = new Color();
 scene.add(new HemisphereLight(0xffffff, 0x8a8a8a, 1.2));
 
 const camera = new PerspectiveCamera(40, 1, 0.01, 100);
-// autoRotate moves the camera, not the object. A light fixed in the world would leave the side
-// facing away from it dark for half of every turn, so the light goes round with the camera.
+// A drag moves the camera round the object, not the object. A light fixed in the world would
+// leave the side turned to the viewer dark from half the angles, so it goes round with the camera.
 const sun = new DirectionalLight(0xffffff, 1.5);
 sun.position.set(1, 1.5, 0.5);
 camera.add(sun);
@@ -48,8 +43,6 @@ const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
 controls.dampingFactor = DAMPING_PER_60HZ_FRAME;
 controls.enablePan = false;
-controls.autoRotate = true;
-controls.autoRotateSpeed = AUTO_ROTATE_SPEED;
 
 const loader = new GLTFLoader();
 const loaded = new Map();
@@ -60,9 +53,9 @@ let sphere = new Sphere();
 let cylinder = { radius: 0, half: 0 };
 let fitted = 0;
 
-// Fitted to the upright cylinder round the model rather than its bounding sphere: autoRotate
-// turns about Y, which leaves the cylinder's outline unchanged, and on a tall phone screen the
-// sphere is wider than anything the turn ever shows. Seen from above at an elevation, the
+// Fitted to the upright cylinder round the model rather than its bounding sphere: a sideways
+// drag turns about Y, which leaves the cylinder's outline unchanged, and on a tall phone screen
+// the sphere is wider than anything the turn ever shows. Seen from above at an elevation, the
 // cylinder's top rim adds to its height on screen. A user who tilts far from the home elevation
 // may see it reach past the edge; zooming out brings it back.
 function fitDistance() {
@@ -185,27 +178,22 @@ async function select(name) {
 let running = false;
 let dragging = false;
 let dirty = true;
-let last = 0;
-let resumeTimer = 0;
-let resumedAt = -Infinity;
+let last = null;
 
 function frame(now) {
-  // The first frame's time can be a little before the performance.now() taken in wake().
-  const seconds = Math.min(Math.max(now - last, 0) / 1000, 0.1);
+  // The first frame after a wake has no frame before it; counted as none, it would damp by
+  // nothing, nothing would move, and the loop would stop with the glide still owed.
+  const seconds = last === null ? 1 / 60 : Math.min(Math.max(now - last, 0) / 1000, 0.1);
   last = now;
   // OrbitControls damps by a share per call, so a 120 Hz phone would stop in half the time of a
   // 60 Hz screen. Scaled by the time since the last frame, the glide lasts the same everywhere.
   controls.dampingFactor = 1 - Math.pow(1 - DAMPING_PER_60HZ_FRAME, seconds * 60);
-  if (controls.autoRotate) {
-    const ramp = Math.min((now - resumedAt) / 1000 / RAMP_SECONDS, 1);
-    controls.autoRotateSpeed = AUTO_ROTATE_SPEED * Math.max(ramp, 0);
-  }
-  const moved = controls.update(seconds);
+  const moved = controls.update();
   if (moved || dirty) {
     renderer.render(scene, camera);
     dirty = false;
   }
-  if (document.hidden || !(controls.autoRotate || moved || dragging)) {
+  if (document.hidden || !(moved || dragging)) {
     running = false;
     return;
   }
@@ -216,26 +204,17 @@ function wake() {
   dirty = true;
   if (running || document.hidden) return;
   running = true;
-  last = performance.now();
+  last = null;
   requestAnimationFrame(frame);
 }
 
 controls.addEventListener('change', wake);
 controls.addEventListener('start', () => {
   dragging = true;
-  clearTimeout(resumeTimer);
-  controls.autoRotate = false;
-  controls.autoRotateSpeed = 0;
   wake();
 });
 controls.addEventListener('end', () => {
   dragging = false;
-  clearTimeout(resumeTimer);
-  resumeTimer = setTimeout(() => {
-    resumedAt = performance.now();
-    controls.autoRotate = true;
-    wake();
-  }, RESUME_MS);
 });
 
 // dblclick is not fired for a double tap on every phone, so taps are counted here for mouse
