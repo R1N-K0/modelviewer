@@ -1,3 +1,6 @@
 trimesh
 fast-simplification
+pymeshfix
+rtree
+scipy
 numpy

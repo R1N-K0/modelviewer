@@ -20,9 +20,8 @@ maskeditor で修正する対象物体の形を、ブラウザで回しながら
   `http://graphics.stanford.edu/pub/3Dscanrep/dragon/dragon_recon.tar.gz` から取る。
   研究に使うこと・無償で再配布することは認められている。**商用には使えない**（売る製品に入れるには許可が要る）。
   出典として Stanford Computer Graphics Laboratory を書くこと
-- **teapot**（`teapot.obj`）：University of Utah の授業 CS 6620（2013 年秋）の課題の配布物
-  `https://graphics.cs.utah.edu/courses/cs6620/fall2013/prj05/teapot.obj`。ライセンスの記載は無い。
-  形は Martin Newell の Utah teapot
+- **teapot**：three.js 0.185.1 の `examples/jsm/geometries/TeapotGeometry.js`（MIT）を `tools/teapot.mjs` で動かして作る。
+  形は Martin Newell の Utah teapot（Bézier パッチのデータ）。`TeapotGeometry.js` は vendor には入れない
 - **three.js** 0.185.1（`static/vendor/three/`、MIT。`LICENSE` を同じ所に置いてある）：npm の `three@0.185.1` から、
   `build/three.module.min.js`・`build/three.core.min.js` と、`examples/jsm/` の
   `controls/OrbitControls.js`・`loaders/GLTFLoader.js`・`utils/BufferGeometryUtils.js`・`utils/SkeletonUtils.js` を

@@ -2,3 +2,4 @@
 .venv/
 tools/_download/
 __pycache__/
+tools/node_modules/
