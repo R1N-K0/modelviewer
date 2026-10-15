@@ -18,7 +18,6 @@ const canvas = document.getElementById('view');
 const buttons = [...document.querySelectorAll('#models button')];
 
 const renderer = new WebGLRenderer({ canvas, antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 
 const scene = new Scene();
 scene.background = new Color(0xe6e6e6);
@@ -91,6 +90,8 @@ function resize() {
   const width = canvas.clientWidth;
   const height = canvas.clientHeight;
   if (width === 0 || height === 0) return;
+  // devicePixelRatio changes when the window moves to another monitor or the page is zoomed.
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   renderer.setSize(width, height, false);
   camera.aspect = width / height;
   camera.updateProjectionMatrix();
