@@ -6,19 +6,24 @@ html, body {
   background: #e6e6e6;
 }
 
-#view {
-  display: block;
-  width: 100vw;
+/* The buttons sit below the canvas rather than over it, so the area the model is fitted to
+   is the area that can be seen. */
+body {
+  display: flex;
+  flex-direction: column;
   height: 100vh;
   height: 100dvh;
+}
+
+#view {
+  display: block;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
   touch-action: none;
 }
 
 #models {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
   display: flex;
   gap: 8px;
   padding: 8px 8px calc(8px + env(safe-area-inset-bottom));

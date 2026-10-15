@@ -1,6 +1,6 @@
 import {
   Color, DirectionalLight, HemisphereLight, MeshStandardMaterial, PerspectiveCamera,
-  Scene, Sphere, WebGLRenderer,
+  Scene, Sphere, Vector3, WebGLRenderer,
 } from 'three';
 import { OrbitControls } from './vendor/three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from './vendor/three/addons/loaders/GLTFLoader.js';
@@ -11,6 +11,8 @@ const DOUBLE_TAP_MS = 300;
 const TAP_SLOP_PX = 10;
 // Seen from the front and a little above, the usual way to look at an object on a table.
 const HOME_DIRECTION = [0, 0.3, 1];
+const HOME_ELEVATION = Math.atan2(HOME_DIRECTION[1], Math.hypot(HOME_DIRECTION[0], HOME_DIRECTION[2]));
+const MARGIN = 1.05;
 
 const canvas = document.getElementById('view');
 const buttons = [...document.querySelectorAll('#models button')];
@@ -46,12 +48,22 @@ let shown = null;
 let shownName = null;
 let current = null;
 let sphere = new Sphere();
+let cylinder = { radius: 0, half: 0 };
 let fitted = 0;
 
+// Fitted to the upright cylinder round the model rather than its bounding sphere: autoRotate
+// turns about Y, which leaves the cylinder's outline unchanged, and on a tall phone screen the
+// sphere is wider than anything the turn ever shows. Seen from above at an elevation, the
+// cylinder's top rim adds to its height on screen. A user who tilts far from the home elevation
+// may see it reach past the edge; zooming out brings it back.
 function fitDistance() {
   const vertical = camera.fov * Math.PI / 180;
   const horizontal = 2 * Math.atan(Math.tan(vertical / 2) * camera.aspect);
-  return sphere.radius / Math.sin(Math.min(vertical, horizontal) / 2);
+  const height = cylinder.half * Math.cos(HOME_ELEVATION) + cylinder.radius * Math.sin(HOME_ELEVATION);
+  return MARGIN * Math.max(
+    cylinder.radius / Math.sin(horizontal / 2),
+    height / Math.sin(vertical / 2),
+  );
 }
 
 // Keeps whatever zoom the user chose, relative to the fit, when the window changes shape.
@@ -99,7 +111,18 @@ function prepare(gltf) {
     if (first) bounds.copy(part); else bounds.union(part);
     first = false;
   });
-  return { root, bounds };
+  const cylinder = { radius: 0, half: 0 };
+  const point = new Vector3();
+  root.traverse((child) => {
+    if (!child.isMesh) return;
+    const position = child.geometry.attributes.position;
+    for (let i = 0; i < position.count; i++) {
+      point.fromBufferAttribute(position, i).applyMatrix4(child.matrixWorld).sub(bounds.center);
+      cylinder.radius = Math.max(cylinder.radius, Math.hypot(point.x, point.z));
+      cylinder.half = Math.max(cylinder.half, Math.abs(point.y));
+    }
+  });
+  return { root, bounds, cylinder };
 }
 
 function load(name) {
@@ -144,6 +167,7 @@ async function select(name) {
   shownName = name;
   scene.add(shown);
   sphere = model.bounds;
+  cylinder = model.cylinder;
   refit(true);
 }
 
