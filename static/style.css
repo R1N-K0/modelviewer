@@ -1,15 +1,16 @@
+/* Dark is the default, so whatever is drawn before any script runs is dark too. */
 :root {
-  --bg: #e6e6e6;
-  --button-bg: #ffffff;
-  --button-fg: #333333;
-  --credit: #777777;
-}
-
-:root[data-theme="dark"] {
   --bg: #202020;
   --button-bg: #333333;
   --button-fg: #dddddd;
   --credit: #999999;
+}
+
+:root[data-theme="light"] {
+  --bg: #e6e6e6;
+  --button-bg: #ffffff;
+  --button-fg: #333333;
+  --credit: #777777;
 }
 
 html, body {

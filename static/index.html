@@ -8,11 +8,10 @@
 <link rel="stylesheet" href="style.css">
 <script>
 // Here rather than in app.js, so the page is drawn in the chosen colours from the first frame.
+// Dark unless light was chosen in this browser.
 let theme = null;
 try { theme = localStorage.getItem('theme'); } catch {}
-if (theme ? theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches) {
-  document.documentElement.dataset.theme = 'dark';
-}
+document.documentElement.dataset.theme = theme === 'light' ? 'light' : 'dark';
 </script>
 <script type="importmap">
 { "imports": { "three": "./vendor/three/three.module.min.js" } }

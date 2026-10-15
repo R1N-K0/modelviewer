@@ -247,11 +247,10 @@ function applyTheme() {
 }
 
 themeButton.addEventListener('click', () => {
-  const dark = document.documentElement.dataset.theme !== 'dark';
-  if (dark) document.documentElement.dataset.theme = 'dark';
-  else delete document.documentElement.dataset.theme;
+  const theme = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+  document.documentElement.dataset.theme = theme;
   try {
-    localStorage.setItem('theme', dark ? 'dark' : 'light');
+    localStorage.setItem('theme', theme);
   } catch {}
   applyTheme();
 });
