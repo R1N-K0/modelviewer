@@ -24,12 +24,14 @@ const MARGIN = 1.05;
 
 const canvas = document.getElementById('view');
 const buttons = [...document.querySelectorAll('#models button')];
+const themeButton = document.getElementById('theme');
 
 const renderer = new WebGLRenderer({ canvas, antialias: true });
 
 const scene = new Scene();
-scene.background = new Color(0xe6e6e6);
-// Low enough that the brightest face stays darker than the background, so the outline shows.
+scene.background = new Color();
+// Low enough that the brightest face stays darker than the light background, so the outline
+// shows; on the dark one it is lighter instead.
 scene.add(new HemisphereLight(0xffffff, 0x8a8a8a, 1.2));
 
 const camera = new PerspectiveCamera(40, 1, 0.01, 100);
@@ -259,6 +261,22 @@ canvas.addEventListener('pointerup', (event) => {
   }
 });
 
+// The colour is kept in style.css alone, so the canvas and the page cannot drift apart.
+function applyTheme() {
+  scene.background.set(getComputedStyle(document.documentElement).getPropertyValue('--bg').trim());
+  wake();
+}
+
+themeButton.addEventListener('click', () => {
+  const dark = document.documentElement.dataset.theme !== 'dark';
+  if (dark) document.documentElement.dataset.theme = 'dark';
+  else delete document.documentElement.dataset.theme;
+  try {
+    localStorage.setItem('theme', dark ? 'dark' : 'light');
+  } catch {}
+  applyTheme();
+});
+
 for (const button of buttons) {
   button.addEventListener('click', () => select(button.dataset.model));
 }
@@ -268,5 +286,6 @@ document.addEventListener('visibilitychange', () => {
 });
 new ResizeObserver(resize).observe(canvas);
 
+applyTheme();
 resize();
 select(location.hash.slice(1));

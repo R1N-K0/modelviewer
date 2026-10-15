@@ -1,9 +1,21 @@
+:root {
+  --bg: #e6e6e6;
+  --button-bg: #ffffff;
+  --button-fg: #333333;
+}
+
+:root[data-theme="dark"] {
+  --bg: #202020;
+  --button-bg: #333333;
+  --button-fg: #dddddd;
+}
+
 html, body {
   margin: 0;
   height: 100%;
   overflow: hidden;
   overscroll-behavior: none;
-  background: #e6e6e6;
+  background: var(--bg);
 }
 
 /* The buttons sit below the canvas rather than over it, so the area the model is fitted to
@@ -34,18 +46,34 @@ body {
   min-height: 56px;
   border: 0;
   border-radius: 8px;
-  background: #ffffff;
-  color: #333333;
+  background: var(--button-bg);
+  color: var(--button-fg);
   font: 18px system-ui, sans-serif;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
 }
 
 #models button.selected {
-  background: #333333;
-  color: #ffffff;
+  background: var(--button-fg);
+  color: var(--button-bg);
 }
 
 #models button.loading {
   opacity: 0.4;
+}
+
+#theme {
+  position: fixed;
+  top: calc(8px + env(safe-area-inset-top));
+  right: calc(8px + env(safe-area-inset-right));
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--button-bg);
+  color: var(--button-fg);
+  font: 20px/1 system-ui, sans-serif;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
