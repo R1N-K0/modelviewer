@@ -15,6 +15,8 @@ import urllib.request
 import fast_simplification
 import numpy as np
 import pymeshfix
+from scipy.sparse import coo_matrix
+from scipy.sparse.csgraph import connected_components
 import trimesh
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -86,7 +88,38 @@ def teapot():
     data = json.loads(out)
     vertices = np.array(data["positions"], dtype=np.float64).reshape(-1, 3)
     faces = np.array(data["index"], dtype=np.int64).reshape(-1, 3)
-    return trimesh.Trimesh(vertices=vertices, faces=faces, process=True)
+    return cap_spout(trimesh.Trimesh(vertices=vertices, faces=faces, process=True))
+
+
+def cap_spout(mesh):
+    """The teapot with the mouth of its spout closed by a fan round the mouth's centre.
+
+    The model stands for a solid object, which has no opening there. The other rims stay open:
+    the lid's lies on the body's own rim, and the spout and handle ends sit inside the body.
+    MeshFix is not used, since it would also rework where the lid meets the rim.
+    """
+    before = boundary_edges(mesh)
+    edges = mesh.edges[trimesh.grouping.group_rows(mesh.edges_sorted, require_count=1)]
+    graph = coo_matrix(
+        (np.ones(len(edges)), (edges[:, 0], edges[:, 1])),
+        shape=(len(mesh.vertices), len(mesh.vertices)),
+    )
+    _, label = connected_components(graph, directed=False)
+    loops = [edges[label[edges[:, 0]] == value] for value in np.unique(label[edges[:, 0]])]
+    mouth = max(loops, key=lambda loop: mesh.vertices[np.unique(loop)].mean(axis=0)[0])
+
+    centre = len(mesh.vertices)
+    vertices = np.vstack([mesh.vertices, mesh.vertices[np.unique(mouth)].mean(axis=0)])
+    # Each rim edge runs one way in the face beside it; the cap takes it the other way, so the
+    # two faces agree on which side is out.
+    fan = np.column_stack([mouth[:, 1], mouth[:, 0], np.full(len(mouth), centre)])
+    capped = trimesh.Trimesh(vertices=vertices, faces=np.vstack([mesh.faces, fan]), process=True)
+    print(
+        f"teapot spout: boundary edges {before:,} -> {boundary_edges(capped):,}, "
+        f"{len(mouth)} rim edges closed, winding consistent {capped.is_winding_consistent}",
+        flush=True,
+    )
+    return capped
 
 
 def boundary_edges(mesh):
