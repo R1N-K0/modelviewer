@@ -7,6 +7,14 @@ import { GLTFLoader } from './vendor/three/addons/loaders/GLTFLoader.js';
 
 const MODELS = ['dragon', 'bunny', 'teapot'];
 const RESUME_MS = 2000;
+// Seconds from the resume to full speed, so a model at rest does not jump into a steady turn.
+const RAMP_SECONDS = 1;
+// Per second when update() is given seconds: one turn a minute, whatever the display's rate.
+const AUTO_ROTATE_SPEED = 1;
+// The share of the remaining drag that is applied in one 60 Hz frame. OrbitControls' default,
+// 0.05, glides on for about a second after the finger lifts, which overshoots the view that
+// was aimed at; at 0.2 the glide is down to 3.5% in about 0.25 s.
+const DAMPING_PER_60HZ_FRAME = 0.2;
 const DOUBLE_TAP_MS = 300;
 const TAP_SLOP_PX = 10;
 // Seen from the front and a little above, the usual way to look at an object on a table.
@@ -36,10 +44,10 @@ const material = new MeshStandardMaterial({ color: 0xd8d8d8, roughness: 0.8 });
 
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
+controls.dampingFactor = DAMPING_PER_60HZ_FRAME;
 controls.enablePan = false;
 controls.autoRotate = true;
-// Per second when update() is given seconds: one turn a minute, whatever the display's rate.
-controls.autoRotateSpeed = 1;
+controls.autoRotateSpeed = AUTO_ROTATE_SPEED;
 
 const loader = new GLTFLoader();
 const loaded = new Map();
@@ -177,11 +185,19 @@ let dragging = false;
 let dirty = true;
 let last = 0;
 let resumeTimer = 0;
+let resumedAt = -Infinity;
 
 function frame(now) {
   // The first frame's time can be a little before the performance.now() taken in wake().
   const seconds = Math.min(Math.max(now - last, 0) / 1000, 0.1);
   last = now;
+  // OrbitControls damps by a share per call, so a 120 Hz phone would stop in half the time of a
+  // 60 Hz screen. Scaled by the time since the last frame, the glide lasts the same everywhere.
+  controls.dampingFactor = 1 - Math.pow(1 - DAMPING_PER_60HZ_FRAME, seconds * 60);
+  if (controls.autoRotate) {
+    const ramp = Math.min((now - resumedAt) / 1000 / RAMP_SECONDS, 1);
+    controls.autoRotateSpeed = AUTO_ROTATE_SPEED * Math.max(ramp, 0);
+  }
   const moved = controls.update(seconds);
   if (moved || dirty) {
     renderer.render(scene, camera);
@@ -207,12 +223,14 @@ controls.addEventListener('start', () => {
   dragging = true;
   clearTimeout(resumeTimer);
   controls.autoRotate = false;
+  controls.autoRotateSpeed = 0;
   wake();
 });
 controls.addEventListener('end', () => {
   dragging = false;
   clearTimeout(resumeTimer);
   resumeTimer = setTimeout(() => {
+    resumedAt = performance.now();
     controls.autoRotate = true;
     wake();
   }, RESUME_MS);
