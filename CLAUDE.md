@@ -1,6 +1,7 @@
 # modelviewer
 
 標準ライブラリの http.server + three.js（ES module、ビルド無し）。テストは無い。`python app.py` → http://localhost:5100。
+`main` に push すると `.github/workflows/pages.yml` が `static/` を GitHub Pages に出す（public）。
 使い方は README、設計の理由は各ファイルのコメントにある。
 
 ## 崩してはいけないもの
@@ -14,6 +15,8 @@
   同じ版で入れ替え、`VERSION` と README の版を直す。`three.module.min.js` は `three.core.min.js` を、
   `GLTFLoader.js` は `../utils/BufferGeometryUtils.js` と `../utils/SkeletonUtils.js` を import するので、
   入れ替えたら `grep import` で相対パスが全部あるか確かめる
+- **`static/` の中の参照は相対パスにする（`/` で始めない）。** GitHub Pages では
+  `https://r1n-k0.github.io/modelviewer/` の下に出るので、`/models/...` は別の場所を指す
 - **描くのは動いているときだけ。** リモートの Windows で立ち上げっぱなしにし、スマホでも開くため。
   `app.js` のループは autoRotate・ダンピング・ドラッグの間だけ回る。画面を変えるものを足したら `wake()` を呼ぶ
 - **画面は下の物体のボタン3つ、右上の背景の切り替え、左上の出典の1行だけ。** ヘルプ・スライダー・設定は足さない。

@@ -3,12 +3,17 @@
 maskeditor で修正する対象物体の形を、ブラウザで回しながら確かめるためのビューア。
 物体を選ぶと画面いっぱいに表示され、ゆっくり回る。PC・スマホ・タブレットで開ける。
 
+公開ページ：https://r1n-k0.github.io/modelviewer/ （研究室の外からはこちら、研究室の中では `python app.py` でも同じ）
+
+- `main` に push すると `.github/workflows/pages.yml` が `static/` をそのまま GitHub Pages に出す。Pages では `app.py` は要らない
+- GitHub のリポジトリの Settings → Pages の Source は「GitHub Actions」にしておく
+
 ## 準備
 
 Python 3.7 以上があればよい（標準ライブラリだけで動くので `pip install` は要らない）。
 
 ```
-git clone <このリポジトリの URL> modelviewer
+git clone https://github.com/R1N-K0/modelviewer.git
 cd modelviewer
 copy .env.example .env
 python app.py
@@ -61,6 +66,9 @@ dragon の読み込みと間引きに2分ほどかかる。最後に三角形数
 - GLB は1個 5 MB 以下でないとスクリプトが止まる
 
 ## 取得元とライセンス
+
+**このページは研究用で、非商用。** bunny と dragon を商用に使うには Stanford の許可が要る。
+画面の左上の出典の行は、Stanford の条件（出典を書く）のために出している。
 
 - **bunny**（`bun_zipper.ply`）・**dragon**（`dragon_vrip.ply`）：
   [The Stanford 3D Scanning Repository](http://graphics.stanford.edu/data/3Dscanrep/)、Stanford Computer Graphics Laboratory。
