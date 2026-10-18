@@ -65,7 +65,7 @@ body {
   opacity: 0.4;
 }
 
-#theme {
+#theme, #mask {
   position: fixed;
   top: calc(8px + env(safe-area-inset-top));
   right: calc(8px + env(safe-area-inset-right));
@@ -81,13 +81,23 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
-/* The Stanford models may be shown only with their source named. It stays clear of the theme
-   button on the right, and lets a drag that starts on it reach the canvas below. */
+#mask {
+  right: calc(52px + env(safe-area-inset-right));
+}
+
+/* Shown on like a selected model, so the state can be read without toggling it. */
+#mask[aria-pressed="true"] {
+  background: var(--button-fg);
+  color: var(--button-bg);
+}
+
+/* The Stanford models may be shown only with their source named. It stays clear of the mask and
+   theme buttons on the right, and lets a drag that starts on it reach the canvas below. */
 #credit {
   position: fixed;
   top: calc(8px + env(safe-area-inset-top));
   left: calc(8px + env(safe-area-inset-left));
-  right: calc(52px + env(safe-area-inset-right));
+  right: calc(96px + env(safe-area-inset-right));
   margin: 0;
   color: var(--credit);
   font: 12px/16px system-ui, sans-serif;

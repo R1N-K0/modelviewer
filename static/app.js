@@ -1,6 +1,7 @@
 import {
-  Color, DirectionalLight, HemisphereLight, MeshStandardMaterial, PerspectiveCamera,
-  Scene, Sphere, Vector3, WebGLRenderer,
+  Box3, Color, DirectionalLight, HemisphereLight, Mesh, MeshBasicMaterial, MeshStandardMaterial,
+  NearestFilter, PerspectiveCamera, PlaneGeometry, Scene, ShaderMaterial, Sphere, Vector2,
+  Vector3, WebGLRenderer, WebGLRenderTarget,
 } from 'three';
 import { OrbitControls } from './vendor/three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from './vendor/three/addons/loaders/GLTFLoader.js';
@@ -16,10 +17,34 @@ const TAP_SLOP_PX = 10;
 const HOME_DIRECTION = [0, 0.3, 1];
 const HOME_ELEVATION = Math.atan2(HOME_DIRECTION[1], Math.hypot(HOME_DIRECTION[0], HOME_DIRECTION[2]));
 const MARGIN = 1.05;
+// The mask look copies maskeditor's render.py, so a mask drawn there can be compared by eye
+// with what one from this viewpoint would be. The colours are not part of the page's theme:
+// they are the pixel classes of the dataset (data/objects.json in maskeditor), one class per
+// shape: dragon is gray_dragon, teapot blue_pot, bunny yellow_bunny.
+const MASK_COLORS = {
+  dragon: [230, 25, 75],
+  teapot: [255, 225, 25],
+  bunny: [245, 130, 48],
+};
+// The long side, in photo pixels, of each shape's mask at its usual size in the dataset's
+// 1920x1440 photos: the median long side of the bounding box of the object's mask over 150
+// sampled ok masks (2026-10-19), one round number for the classes of each shape (dragon 256 and
+// 242, teapot 155 and 156, bunny 196, 198 and 212).
+const MASK_PHOTO_SIZE = {
+  dragon: 250,
+  teapot: 155,
+  bunny: 200,
+};
+// render.py's ALPHA: the share of the class colour inside the mask.
+const MASK_ALPHA = 0.18;
+// The widest outline the shader looks for, in drawing-buffer pixels. Above anything the closest
+// zoom gives, so it only bounds the loop.
+const MASK_MAX_EDGE = 32;
 
 const canvas = document.getElementById('view');
 const buttons = [...document.querySelectorAll('#models button')];
 const themeButton = document.getElementById('theme');
+const maskButton = document.getElementById('mask');
 
 const renderer = new WebGLRenderer({ canvas, antialias: true });
 
@@ -44,6 +69,70 @@ controls.enableDamping = true;
 controls.dampingFactor = DAMPING_PER_60HZ_FRAME;
 controls.enablePan = false;
 
+// The silhouette is drawn alone into a texture, then a pass over the whole screen lays the mask
+// on the picture. The texture has no antialiasing, so each pixel is in or out like a mask's.
+const maskTarget = new WebGLRenderTarget(1, 1, {
+  minFilter: NearestFilter, magFilter: NearestFilter, depthBuffer: false,
+});
+// The same side as the shaded material, so the mask covers exactly the pixels the model is drawn
+// on: a gap that shows the background through the dragon stays a hole, as it would in a photo.
+const silhouette = new MeshBasicMaterial({ color: 0xffffff, side: material.side });
+// Plain alpha blending over the finished picture is render.py's over(): picture * (1 - a) +
+// colour * a, with a = 1 on the outline. Both work on the sRGB values as stored, so the colour is
+// given as those values and the shader leaves out three.js's colour space conversion.
+const overlayMaterial = new ShaderMaterial({
+  uniforms: {
+    mask: { value: maskTarget.texture },
+    size: { value: new Vector2(1, 1) },
+    edgeWidth: { value: 1 },
+    color: { value: new Vector3() },
+    alpha: { value: MASK_ALPHA },
+  },
+  vertexShader: `
+    void main() {
+      gl_Position = vec4(position.xy, 0.0, 1.0);
+    }
+  `,
+  // render.py's find_edges(): a mask pixel with a 4-neighbour outside is outline, so the line
+  // lies just inside the boundary. Here a photo pixel spans edgeWidth screen pixels, so the
+  // neighbours are looked for along the row and the column up to that distance, as find_edges
+  // looks only along rows and columns. The border of the picture is not an edge there either,
+  // which reading past it here gives too, as the texture is clamped to its last row and column.
+  defines: { MAX_EDGE: MASK_MAX_EDGE },
+  fragmentShader: `
+    uniform sampler2D mask;
+    uniform vec2 size;
+    uniform float edgeWidth;
+    uniform vec3 color;
+    uniform float alpha;
+    float inside(vec2 offset) {
+      return texture2D(mask, (gl_FragCoord.xy + offset) / size).r;
+    }
+    void main() {
+      if (inside(vec2(0.0)) < 0.5) discard;
+      for (int k = 1; k <= MAX_EDGE; k++) {
+        float d = float(k);
+        if (d > edgeWidth) break;
+        float around = min(min(inside(vec2(d, 0.0)), inside(vec2(-d, 0.0))),
+                           min(inside(vec2(0.0, d)), inside(vec2(0.0, -d))));
+        if (around < 0.5) {
+          gl_FragColor = vec4(color, 1.0);
+          return;
+        }
+      }
+      gl_FragColor = vec4(color, alpha);
+    }
+  `,
+  transparent: true,
+  depthTest: false,
+  depthWrite: false,
+});
+const overlayQuad = new Mesh(new PlaneGeometry(2, 2), overlayMaterial);
+overlayQuad.frustumCulled = false;
+const overlay = new Scene();
+overlay.add(overlayQuad);
+let masked = false;
+
 const loader = new GLTFLoader();
 const loaded = new Map();
 let shown = null;
@@ -51,6 +140,7 @@ let shownName = null;
 let current = null;
 let sphere = new Sphere();
 let cylinder = { radius: 0, half: 0 };
+let corners = [];
 let fitted = 0;
 
 // Fitted to the upright cylinder round the model rather than its bounding sphere: a sideways
@@ -96,6 +186,8 @@ function resize() {
   // devicePixelRatio changes when the window moves to another monitor or the page is zoomed.
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   renderer.setSize(width, height, false);
+  const size = renderer.getDrawingBufferSize(overlayMaterial.uniforms.size.value);
+  maskTarget.setSize(size.x, size.y);
   camera.aspect = width / height;
   camera.updateProjectionMatrix();
   if (shown) refit(false);
@@ -116,17 +208,28 @@ function prepare(gltf) {
     first = false;
   });
   const cylinder = { radius: 0, half: 0 };
+  const box = new Box3();
   const point = new Vector3();
   root.traverse((child) => {
     if (!child.isMesh) return;
     const position = child.geometry.attributes.position;
     for (let i = 0; i < position.count; i++) {
-      point.fromBufferAttribute(position, i).applyMatrix4(child.matrixWorld).sub(bounds.center);
+      point.fromBufferAttribute(position, i).applyMatrix4(child.matrixWorld);
+      box.expandByPoint(point);
+      point.sub(bounds.center);
       cylinder.radius = Math.max(cylinder.radius, Math.hypot(point.x, point.z));
       cylinder.half = Math.max(cylinder.half, Math.abs(point.y));
     }
   });
-  return { root, bounds, cylinder };
+  const corners = [];
+  for (let i = 0; i < 8; i++) {
+    corners.push(new Vector3(
+      i & 1 ? box.max.x : box.min.x,
+      i & 2 ? box.max.y : box.min.y,
+      i & 4 ? box.max.z : box.min.z,
+    ));
+  }
+  return { root, bounds, cylinder, corners };
 }
 
 function load(name) {
@@ -172,6 +275,7 @@ async function select(name) {
   scene.add(shown);
   sphere = model.bounds;
   cylinder = model.cylinder;
+  corners = model.corners;
   refit(true);
 }
 
@@ -179,6 +283,53 @@ let running = false;
 let dragging = false;
 let dirty = true;
 let last = null;
+
+const projected = new Vector3();
+
+// maskeditor's outline is one photo pixel, scaled with the photo when zoomed. Taking the model on
+// screen as the object at its usual size in the photos, one photo pixel is its long side on
+// screen over its long side in the photos. The long side on screen comes from the corners of the
+// bounding box rather than the silhouette, which would need the picture read back from the GPU.
+// A corner behind the camera has no place on screen; it only happens zoomed in to the closest,
+// where the other corners still span far past the screen.
+function edgeWidth() {
+  const size = overlayMaterial.uniforms.size.value;
+  let left = Infinity, right = -Infinity, bottom = Infinity, top = -Infinity;
+  for (const corner of corners) {
+    projected.copy(corner).applyMatrix4(camera.matrixWorldInverse);
+    if (projected.z > -camera.near) continue;
+    projected.applyMatrix4(camera.projectionMatrix);
+    left = Math.min(left, projected.x);
+    right = Math.max(right, projected.x);
+    bottom = Math.min(bottom, projected.y);
+    top = Math.max(top, projected.y);
+  }
+  const longSide = Math.max((right - left) * size.x, (top - bottom) * size.y) / 2;
+  // Whole pixels, as maskeditor's edge is.
+  const width = Math.round(longSide / MASK_PHOTO_SIZE[shownName]);
+  return Math.min(Math.max(width, 1), MASK_MAX_EDGE);
+}
+
+function drawMask() {
+  const background = scene.background;
+  scene.background = null;
+  scene.overrideMaterial = silhouette;
+  renderer.setRenderTarget(maskTarget);
+  renderer.render(scene, camera);
+  renderer.setRenderTarget(null);
+  scene.overrideMaterial = null;
+  scene.background = background;
+  overlayMaterial.uniforms.color.value.fromArray(MASK_COLORS[shownName]).divideScalar(255);
+  overlayMaterial.uniforms.edgeWidth.value = edgeWidth();
+  renderer.autoClear = false;
+  renderer.render(overlay, camera);
+  renderer.autoClear = true;
+}
+
+function draw() {
+  renderer.render(scene, camera);
+  if (masked && shown) drawMask();
+}
 
 function frame(now) {
   // The first frame after a wake has no frame before it; counted as none, it would damp by
@@ -190,7 +341,7 @@ function frame(now) {
   controls.dampingFactor = 1 - Math.pow(1 - DAMPING_PER_60HZ_FRAME, seconds * 60);
   const moved = controls.update();
   if (moved || dirty) {
-    renderer.render(scene, camera);
+    draw();
     dirty = false;
   }
   if (document.hidden || !(moved || dragging)) {
@@ -255,6 +406,20 @@ themeButton.addEventListener('click', () => {
   applyTheme();
 });
 
+// Kept per browser like the theme, so someone checking masks finds the mask look still on.
+function applyMask(on) {
+  masked = on;
+  maskButton.setAttribute('aria-pressed', String(on));
+  wake();
+}
+
+maskButton.addEventListener('click', () => {
+  try {
+    localStorage.setItem('mask', masked ? 'off' : 'on');
+  } catch {}
+  applyMask(!masked);
+});
+
 for (const button of buttons) {
   button.addEventListener('click', () => select(button.dataset.model));
 }
@@ -265,5 +430,8 @@ document.addEventListener('visibilitychange', () => {
 new ResizeObserver(resize).observe(canvas);
 
 applyTheme();
+let savedMask = null;
+try { savedMask = localStorage.getItem('mask'); } catch {}
+applyMask(savedMask === 'on');
 resize();
 select(location.hash.slice(1));
