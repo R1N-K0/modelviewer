@@ -132,6 +132,7 @@ overlayQuad.frustumCulled = false;
 const overlay = new Scene();
 overlay.add(overlayQuad);
 let masked = false;
+let maskPrepared = false;
 
 const loader = new GLTFLoader();
 const loaded = new Map();
@@ -140,7 +141,7 @@ let shownName = null;
 let current = null;
 let sphere = new Sphere();
 let cylinder = { radius: 0, half: 0 };
-let corners = [];
+let longSide = 0;
 let fitted = 0;
 
 // Fitted to the upright cylinder round the model rather than its bounding sphere: a sideways
@@ -221,15 +222,8 @@ function prepare(gltf) {
       cylinder.half = Math.max(cylinder.half, Math.abs(point.y));
     }
   });
-  const corners = [];
-  for (let i = 0; i < 8; i++) {
-    corners.push(new Vector3(
-      i & 1 ? box.max.x : box.min.x,
-      i & 2 ? box.max.y : box.min.y,
-      i & 4 ? box.max.z : box.min.z,
-    ));
-  }
-  return { root, bounds, cylinder, corners };
+  const extent = box.getSize(new Vector3());
+  return { root, bounds, cylinder, longSide: Math.max(extent.x, extent.y, extent.z) };
 }
 
 function load(name) {
@@ -275,42 +269,38 @@ async function select(name) {
   scene.add(shown);
   sphere = model.bounds;
   cylinder = model.cylinder;
-  corners = model.corners;
+  longSide = model.longSide;
   refit(true);
+  // The first press of the mask button would otherwise wait for the mask's shaders and texture
+  // to be built, most of a frame; done once here, off screen, while the first model appears.
+  if (!maskPrepared) {
+    drawSilhouette();
+    renderer.compile(overlay, camera);
+    maskPrepared = true;
+  }
 }
 
 let running = false;
 let dragging = false;
+let gliding = false;
 let dirty = true;
 let last = null;
+const lastPosition = new Vector3();
 
-const projected = new Vector3();
-
-// maskeditor's outline is one photo pixel, scaled with the photo when zoomed. Taking the model on
-// screen as the object at its usual size in the photos, one photo pixel is its long side on
-// screen over its long side in the photos. The long side on screen comes from the corners of the
-// bounding box rather than the silhouette, which would need the picture read back from the GPU.
-// A corner behind the camera has no place on screen; it only happens zoomed in to the closest,
-// where the other corners still span far past the screen.
+// maskeditor's outline is one photo pixel, scaled with the photo when zoomed. How large a photo
+// pixel is on the object depends on how far the camera was, not on how the object was turned, so
+// the width here follows only the camera's distance: the model's long side in pixels, as if it
+// stood square to the camera at the target, over its long side in the photos.
 function edgeWidth() {
-  const size = overlayMaterial.uniforms.size.value;
-  let left = Infinity, right = -Infinity, bottom = Infinity, top = -Infinity;
-  for (const corner of corners) {
-    projected.copy(corner).applyMatrix4(camera.matrixWorldInverse);
-    if (projected.z > -camera.near) continue;
-    projected.applyMatrix4(camera.projectionMatrix);
-    left = Math.min(left, projected.x);
-    right = Math.max(right, projected.x);
-    bottom = Math.min(bottom, projected.y);
-    top = Math.max(top, projected.y);
-  }
-  const longSide = Math.max((right - left) * size.x, (top - bottom) * size.y) / 2;
+  const height = overlayMaterial.uniforms.size.value.y;
+  const distance = camera.position.distanceTo(sphere.center);
+  const pixelsPerUnit = height / (2 * Math.tan(camera.fov * Math.PI / 360) * distance);
   // Whole pixels, as maskeditor's edge is.
-  const width = Math.round(longSide / MASK_PHOTO_SIZE[shownName]);
+  const width = Math.round(longSide * pixelsPerUnit / MASK_PHOTO_SIZE[shownName]);
   return Math.min(Math.max(width, 1), MASK_MAX_EDGE);
 }
 
-function drawMask() {
+function drawSilhouette() {
   const background = scene.background;
   scene.background = null;
   scene.overrideMaterial = silhouette;
@@ -319,6 +309,10 @@ function drawMask() {
   renderer.setRenderTarget(null);
   scene.overrideMaterial = null;
   scene.background = background;
+}
+
+function drawMask() {
+  drawSilhouette();
   overlayMaterial.uniforms.color.value.fromArray(MASK_COLORS[shownName]).divideScalar(255);
   overlayMaterial.uniforms.edgeWidth.value = edgeWidth();
   renderer.autoClear = false;
@@ -339,12 +333,26 @@ function frame(now) {
   // OrbitControls damps by a share per call, so a 120 Hz phone would stop in half the time of a
   // 60 Hz screen. Scaled by the time since the last frame, the glide lasts the same everywhere.
   controls.dampingFactor = 1 - Math.pow(1 - DAMPING_PER_60HZ_FRAME, seconds * 60);
-  const moved = controls.update();
-  if (moved || dirty) {
+  // A glide ends when update() reports false: the step it just took is under OrbitControls'
+  // EPS. That step still moved the camera, and OrbitControls still holds the rest of the turn,
+  // four times that step at 60 Hz, paying out another share on each update(). So the last step is
+  // drawn, and update() runs only while the controls are in use; otherwise a wake that only
+  // redraws (the mask or background button) would move the model. The rest goes into the next
+  // drag or zoom.
+  let moved = gliding && controls.update();
+  // At the closest or farthest zoom OrbitControls can report a change on every call: the
+  // distance it reads back from the camera is a rounding error off the limit, and clamping it
+  // counts as a zoom. The camera then moves by a rounding error at most, and without this the
+  // loop would never stop (3 to 7 view directions in 100 at the closest zoom).
+  if (camera.position.distanceTo(lastPosition) <= sphere.radius * 1e-9) moved = false;
+  lastPosition.copy(camera.position);
+  const stopping = !(moved || dragging);
+  if (moved || dirty || (gliding && stopping)) {
     draw();
     dirty = false;
   }
-  if (document.hidden || !(moved || dragging)) {
+  if (stopping) gliding = false;
+  if (document.hidden || !gliding) {
     running = false;
     return;
   }
@@ -359,9 +367,13 @@ function wake() {
   requestAnimationFrame(frame);
 }
 
-controls.addEventListener('change', wake);
+controls.addEventListener('change', () => {
+  gliding = true;
+  wake();
+});
 controls.addEventListener('start', () => {
   dragging = true;
+  gliding = true;
   wake();
 });
 controls.addEventListener('end', () => {
