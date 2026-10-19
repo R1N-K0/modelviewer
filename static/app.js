@@ -35,11 +35,15 @@ const MASK_PHOTO_SIZE = {
   teapot: 155,
   bunny: 200,
 };
+// The outline's width in photo pixels. maskeditor's is 1; the user asked for a thicker one here
+// (2026-10-19). 1 gives maskeditor's look again.
+const MASK_EDGE_PHOTO_PX = 2;
 // render.py's ALPHA: the share of the class colour inside the mask.
 const MASK_ALPHA = 0.18;
-// The widest outline the shader looks for, in drawing-buffer pixels. Above anything the closest
-// zoom gives, so it only bounds the loop.
-const MASK_MAX_EDGE = 32;
+// The widest outline the shader looks for, in drawing-buffer pixels. The teapot at the closest
+// zoom gives the widest, 0.034 of the drawing buffer's height at 2 photo pixels, so this holds
+// up to 3700 pixels high, past a 5K screen at devicePixelRatio 2; it only bounds the loop.
+const MASK_MAX_EDGE = 128;
 
 const canvas = document.getElementById('view');
 const buttons = [...document.querySelectorAll('#models button')];
@@ -62,7 +66,14 @@ sun.position.set(1, 1.5, 0.5);
 camera.add(sun);
 scene.add(camera);
 
-const material = new MeshStandardMaterial({ color: 0xd8d8d8, roughness: 0.8 });
+// As dark as the objects in the dataset's photos, so the mask's 18% of class colour shows as much
+// as it does over a photo in maskeditor; over a light gray it hardly showed. The mean of R, G, B
+// inside the mask over 150 sampled ok masks (2026-10-19) has a median of 107 over the 530 objects
+// (mean 120; gray_dragon 110, green_dragon 91, blue_pot 103, white_pot 196, yellow_bunny 130,
+// red_bunny 87, blue_bunny 98). This colour draws the model with the same mean over its pixels,
+// measured on screen at the home view with the lights above (dragon 106, bunny 111, teapot 106);
+// the colour's own value is higher, as the lights scale it. Measure again if the lights change.
+const material = new MeshStandardMaterial({ color: 0x8b8b8b, roughness: 0.8 });
 
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
@@ -94,10 +105,11 @@ const overlayMaterial = new ShaderMaterial({
     }
   `,
   // render.py's find_edges(): a mask pixel with a 4-neighbour outside is outline, so the line
-  // lies just inside the boundary. Here a photo pixel spans edgeWidth screen pixels, so the
-  // neighbours are looked for along the row and the column up to that distance, as find_edges
-  // looks only along rows and columns. The border of the picture is not an edge there either,
-  // which reading past it here gives too, as the texture is clamped to its last row and column.
+  // lies just inside the boundary. Here the outline's photo pixels span edgeWidth screen
+  // pixels, so the neighbours are looked for along the row and the column up to that distance,
+  // as find_edges looks only along rows and columns. The border of the picture is not an edge
+  // there either, which reading past it here gives too, as the texture is clamped to its last
+  // row and column.
   defines: { MAX_EDGE: MASK_MAX_EDGE },
   fragmentShader: `
     uniform sampler2D mask;
@@ -287,16 +299,19 @@ let dirty = true;
 let last = null;
 const lastPosition = new Vector3();
 
-// maskeditor's outline is one photo pixel, scaled with the photo when zoomed. How large a photo
-// pixel is on the object depends on how far the camera was, not on how the object was turned, so
-// the width here follows only the camera's distance: the model's long side in pixels, as if it
-// stood square to the camera at the target, over its long side in the photos.
+// maskeditor's outline is one photo pixel, scaled with the photo when zoomed; here it is
+// MASK_EDGE_PHOTO_PX of them. How large a photo pixel is on the object depends on how far the
+// camera was, not on how the object was turned, so the width here follows only the camera's
+// distance: the model's long side in pixels, as if it stood square to the camera at the target,
+// over its long side in the photos.
 function edgeWidth() {
   const height = overlayMaterial.uniforms.size.value.y;
   const distance = camera.position.distanceTo(sphere.center);
   const pixelsPerUnit = height / (2 * Math.tan(camera.fov * Math.PI / 360) * distance);
-  // Whole pixels, as maskeditor's edge is.
-  const width = Math.round(longSide * pixelsPerUnit / MASK_PHOTO_SIZE[shownName]);
+  const photoPixel = longSide * pixelsPerUnit / MASK_PHOTO_SIZE[shownName];
+  // Rounded after the photo pixels are added up, so 2 photo pixels of 1.4 screen pixels each
+  // are 3, not 2 * 1; whole pixels, as maskeditor's edge is.
+  const width = Math.round(MASK_EDGE_PHOTO_PX * photoPixel);
   return Math.min(Math.max(width, 1), MASK_MAX_EDGE);
 }
 
