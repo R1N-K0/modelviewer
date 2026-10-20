@@ -1,7 +1,8 @@
 # modelviewer
 
 maskeditor で修正する対象物体の形を、ブラウザで回しながら確かめるためのビューア。
-物体を選ぶと画面いっぱいに表示され、ドラッグで回して見られる。PC・スマホ・タブレットで開ける。
+物体を選ぶと画面いっぱいに表示され、ドラッグで回して見られる。どの向きにも回せ（上へ引き続ければ極を越えて逆さまになり、
+円を描くように引けば画面の中で傾く）、ダブルタップ（PC ではダブルクリック）で初めの向きと大きさに戻る。PC・スマホ・タブレットで開ける。
 右上の ▣ を押すと、いまの視点から塗ったマスクを maskeditor と同じ色の付け方（中はクラスの色を 18% 重ね、
 輪郭はクラスの色そのまま）で重ねる。回すとマスクも付いてくる。もう一度押すと元の見た目に戻る。
 色は dragon が gray_dragon、teapot が blue_pot、bunny が yellow_bunny のもの。
@@ -32,5 +33,5 @@ maskeditor で修正する対象物体の形を、ブラウザで回しながら
   形は Martin Newell の Utah teapot（Bézier パッチのデータ）。`TeapotGeometry.js` は vendor には入れない
 - **three.js** 0.185.1（`static/vendor/three/`、MIT。`LICENSE` を同じ所に置いてある）：npm の `three@0.185.1` から、
   `build/three.module.min.js`・`build/three.core.min.js` と、`examples/jsm/` の
-  `controls/OrbitControls.js`・`loaders/GLTFLoader.js`・`utils/BufferGeometryUtils.js`・`utils/SkeletonUtils.js` を
+  `controls/TrackballControls.js`・`loaders/GLTFLoader.js`・`utils/BufferGeometryUtils.js`・`utils/SkeletonUtils.js` を
   そのまま写した。版は `static/vendor/three/VERSION` にもある

@@ -3,14 +3,28 @@ import {
   NearestFilter, PerspectiveCamera, PlaneGeometry, Scene, ShaderMaterial, Sphere, Vector2,
   Vector3, WebGLRenderer, WebGLRenderTarget,
 } from 'three';
-import { OrbitControls } from './vendor/three/addons/controls/OrbitControls.js';
+import { TrackballControls } from './vendor/three/addons/controls/TrackballControls.js';
 import { GLTFLoader } from './vendor/three/addons/loaders/GLTFLoader.js';
 
 const MODELS = ['dragon', 'bunny', 'teapot'];
-// The share of the remaining drag that is applied in one 60 Hz frame. OrbitControls' default,
-// 0.05, glides on for about a second after the finger lifts, which overshoots the view that
-// was aimed at; at 0.2 the glide is down to 3.5% in about 0.25 s.
+// The share of the remaining turn that is applied in one 60 Hz frame of the glide after the
+// finger lifts. At 0.05 the glide went on for about a second, which overshot the view that was
+// aimed at; at 0.2 it is down to 3.5% in about 0.25 s.
 const DAMPING_PER_60HZ_FRAME = 0.2;
+// TrackballControls turns by rotateSpeed radians for a drag of half the canvas's width, up and
+// down as well as sideways (it measures both by the width). At pi a drag across the whole width
+// is one full turn. Turning the model upside down, half a turn, then takes an upward drag of half
+// the width: 960 pixels on a PC screen 1920 wide, most of the canvas's height, so anything slower
+// would need two strokes there.
+const ROTATE_SPEED = Math.PI;
+// A wheel notch changes the distance by a factor of 0.95, as it did before the trackball.
+const WHEEL_NOTCH_SCALE = 0.95;
+// The loop stops once a frame turns the view by less than this many radians per 60 Hz frame, or
+// moves the camera by less than this share of its distance. TrackballControls never ends a glide
+// itself: it shrinks the step on every update() without reaching 0. The rest it would still have
+// turned, four times the last step at 60 Hz, then moves a point 1000 pixels from the centre of
+// the screen by 0.4 pixels.
+const STILL_PER_60HZ_FRAME = 1e-4;
 const DOUBLE_TAP_MS = 300;
 const TAP_SLOP_PX = 10;
 // Seen from the front and a little above, the usual way to look at an object on a table.
@@ -75,10 +89,18 @@ scene.add(camera);
 // the colour's own value is higher, as the lights scale it. Measure again if the lights change.
 const material = new MeshStandardMaterial({ color: 0x8b8b8b, roughness: 0.8 });
 
-const controls = new OrbitControls(camera, canvas);
-controls.enableDamping = true;
-controls.dampingFactor = DAMPING_PER_60HZ_FRAME;
-controls.enablePan = false;
+// A trackball, so that any view can be had: controls that turn only sideways and up and down
+// stop at straight above and below, and a view with the dragon's head down cannot be had.
+// TrackballControls turns about the axis on screen square to the drag, so dragging on upward goes
+// over the top to upside down, and a circling drag tilts the model in the screen.
+const controls = new TrackballControls(camera, canvas);
+controls.rotateSpeed = ROTATE_SPEED;
+controls.noPan = true;
+// TrackballControls listens on window for A, S and D held during a drag, to make it turn, zoom or
+// pan. The page has no keys to learn, and S pressed for anything else would turn a drag into a
+// zoom, so none is set. An empty list rather than empty names, as a key the browser cannot name
+// has '' as its code.
+controls.keys = [];
 
 // The silhouette is drawn alone into a texture, then a pass over the whole screen lays the mask
 // on the picture. The texture has no antialiasing, so each pixel is in or out like a mask's.
@@ -156,11 +178,11 @@ let cylinder = { radius: 0, half: 0 };
 let longSide = 0;
 let fitted = 0;
 
-// Fitted to the upright cylinder round the model rather than its bounding sphere: a sideways
-// drag turns about Y, which leaves the cylinder's outline unchanged, and on a tall phone screen
-// the sphere is wider than anything the turn ever shows. Seen from above at an elevation, the
-// cylinder's top rim adds to its height on screen. A user who tilts far from the home elevation
-// may see it reach past the edge; zooming out brings it back.
+// Fitted to the upright cylinder round the model rather than its bounding sphere: the model
+// stands upright in the home view, and on a tall phone screen the sphere is wider than anything
+// that view shows. Seen from above at an elevation, the cylinder's top rim adds to its height on
+// screen. Turned away from home, the model may reach past the edge: the trackball turns any way,
+// and even a sideways drag turns about the screen's vertical, not Y. Zooming out brings it back.
 function fitDistance() {
   const vertical = camera.fov * Math.PI / 180;
   const horizontal = 2 * Math.atan(Math.tan(vertical / 2) * camera.aspect);
@@ -177,6 +199,8 @@ function refit(home) {
   const offset = camera.position.clone().sub(controls.target);
   if (home || fitted === 0 || offset.lengthSq() === 0) {
     offset.set(...HOME_DIRECTION).setLength(distance);
+    // TrackballControls turns camera.up with the view, so home would stay tilted without this.
+    camera.up.set(0, 1, 0);
   } else {
     offset.multiplyScalar(distance / fitted);
   }
@@ -196,6 +220,8 @@ function resize() {
   const width = canvas.clientWidth;
   const height = canvas.clientHeight;
   if (width === 0 || height === 0) return;
+  // TrackballControls measures drags against the canvas's rectangle, which it reads only here.
+  controls.handleResize();
   // devicePixelRatio changes when the window moves to another monitor or the page is zoomed.
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   renderer.setSize(width, height, false);
@@ -293,11 +319,16 @@ async function select(name) {
 }
 
 let running = false;
-let dragging = false;
 let gliding = false;
 let dirty = true;
 let last = null;
 const lastPosition = new Vector3();
+const lastUp = new Vector3();
+// TrackballControls fires 'end' for each finger lifted, so already after the first of two, and
+// nothing on pointercancel; and a drag moves the view only in update(), which the loop calls, so
+// a loop stopped while a finger rests would leave the drag dead. The loop keeps running while
+// any pointer counted here is down on the canvas.
+const pressed = new Set();
 
 // maskeditor's outline is one photo pixel, scaled with the photo when zoomed; here it is
 // MASK_EDGE_PHOTO_PX of them. How large a photo pixel is on the object depends on how far the
@@ -345,23 +376,35 @@ function frame(now) {
   // nothing, nothing would move, and the loop would stop with the glide still owed.
   const seconds = last === null ? 1 / 60 : Math.min(Math.max(now - last, 0) / 1000, 0.1);
   last = now;
-  // OrbitControls damps by a share per call, so a 120 Hz phone would stop in half the time of a
-  // 60 Hz screen. Scaled by the time since the last frame, the glide lasts the same everywhere.
-  controls.dampingFactor = 1 - Math.pow(1 - DAMPING_PER_60HZ_FRAME, seconds * 60);
-  // A glide ends when update() reports false: the step it just took is under OrbitControls'
-  // EPS. That step still moved the camera, and OrbitControls still holds the rest of the turn,
-  // four times that step at 60 Hz, paying out another share on each update(). So the last step is
-  // drawn, and update() runs only while the controls are in use; otherwise a wake that only
-  // redraws (the mask or background button) would move the model. The rest goes into the next
-  // drag or zoom.
-  let moved = gliding && controls.update();
-  // At the closest or farthest zoom OrbitControls can report a change on every call: the
-  // distance it reads back from the camera is a rounding error off the limit, and clamping it
-  // counts as a zoom. The camera then moves by a rounding error at most, and without this the
-  // loop would never stop (3 to 7 view directions in 100 at the closest zoom).
-  if (camera.position.distanceTo(lastPosition) <= sphere.radius * 1e-9) moved = false;
+  const frames = seconds * 60;
+  // Once the pointer stops, TrackballControls keeps turning by the last step's angle and
+  // multiplies it by sqrt(1 - dynamicDampingFactor) on every update(), so a fixed factor would
+  // stop a 120 Hz phone in half the time of a 60 Hz screen. For the step to fall by
+  // (1 - DAMPING_PER_60HZ_FRAME) per 60 Hz frame however often frames come,
+  // sqrt(1 - factor) = (1 - DAMPING_PER_60HZ_FRAME)^frames, so the square root is undone by the
+  // 2 here; at 60 Hz the factor is 0.36. The zoom still owed falls by (1 - factor) itself, so
+  // its glide ends twice as fast as the turn's, which suits a zoom that used to have none.
+  const damping = 1 - Math.pow(1 - DAMPING_PER_60HZ_FRAME, 2 * frames);
+  controls.dynamicDampingFactor = damping;
+  // A wheel event adds deltaY * 0.00025 to the zoom TrackballControls owes, and each update()
+  // zooms by zoomSpeed times what is owed while that falls by (1 - damping). A notch (deltaY
+  // 100) thus changes the log of the distance by about 0.025 * zoomSpeed / damping, so a fixed
+  // zoomSpeed would zoom further at a higher frame rate; scaled with the damping it does not.
+  controls.zoomSpeed = -Math.log(WHEEL_NOTCH_SCALE) / (100 * 0.00025) * damping;
+  // update() runs only while the controls are in use; otherwise a wake that only redraws (the
+  // mask or background button) would move the model by the rest of a glide, which goes into the
+  // next drag or zoom instead. update() returns nothing, and fires 'change' only once the camera
+  // is 0.001 from where it last fired, which a roll may never be: a circling drag turns
+  // camera.up more than it moves the camera. So the move is read off the camera itself.
+  if (gliding) controls.update();
+  // The threshold also ends the loop at the closest or farthest zoom, where clamping the distance
+  // moves the camera by a rounding error on every update().
+  const still = STILL_PER_60HZ_FRAME * frames;
+  const moved = camera.position.distanceTo(lastPosition) > still * camera.position.distanceTo(controls.target)
+    || camera.up.distanceTo(lastUp) > still;
   lastPosition.copy(camera.position);
-  const stopping = !(moved || dragging);
+  lastUp.copy(camera.up);
+  const stopping = !(moved || pressed.size > 0);
   if (moved || dirty || (gliding && stopping)) {
     draw();
     dirty = false;
@@ -382,27 +425,28 @@ function wake() {
   requestAnimationFrame(frame);
 }
 
-controls.addEventListener('change', () => {
-  gliding = true;
-  wake();
-});
+// Fired on a press and on a wheel turn.
 controls.addEventListener('start', () => {
-  dragging = true;
   gliding = true;
   wake();
-});
-controls.addEventListener('end', () => {
-  dragging = false;
 });
 
 // dblclick is not fired for a double tap on every phone, so taps are counted here for mouse
 // and finger alike. Only the primary pointer counts, so lifting two fingers is not a double tap.
 let down = null;
 let lastTap = 0;
+// TrackballControls captures the first pointer to the canvas and lets pointer events through, so
+// these still see every press and release on it.
 canvas.addEventListener('pointerdown', (event) => {
+  pressed.add(event.pointerId);
   down = event.isPrimary ? { x: event.clientX, y: event.clientY } : null;
 });
+canvas.addEventListener('pointercancel', (event) => {
+  pressed.delete(event.pointerId);
+  if (event.isPrimary) down = null;
+});
 canvas.addEventListener('pointerup', (event) => {
+  pressed.delete(event.pointerId);
   if (!down || !event.isPrimary) return;
   const still = Math.hypot(event.clientX - down.x, event.clientY - down.y) < TAP_SLOP_PX;
   down = null;
